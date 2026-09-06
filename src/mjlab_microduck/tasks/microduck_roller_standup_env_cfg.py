@@ -91,24 +91,27 @@ def _resolve_play_face_up():
         print(f"[roller_standup] STANDUP_PLAY_FACE_UP='{raw}' invalide -> défaut {PLAY_FACE_UP}")
         return PLAY_FACE_UP
 
-# ── Indices de joints — les roues passives sont INTERCALÉES ───────────────────
-# Ordre réel du modèle rollers (18 joints après le free-joint), vérifié dans
-# MuJoCo via get_walk_rollers_spec().compile() :
-#   0-4   left_hip_yaw, left_hip_roll, left_hip_pitch, left_knee, left_ankle
-#   5-6   passive_LF_wheel, passive_LR_wheel
-#   7-10  neck_pitch, head_pitch, head_yaw, head_roll
-#   11-15 right_hip_yaw, right_hip_roll, right_hip_pitch, right_knee, right_ankle
-#   16-17 passive_RF_wheel, passive_RR_wheel
-# Le standup utilise [0-4, 9-13] / [5-8] : ce sont les indices du modèle SANS
-# roues, ils ne valent PAS ici. Verrouillé par tests/test_roller_standup_cfg.py.
+# ── Indices de joints ─────────────────────────────────────────────────────────
+# MuJoCo rollers model (18 articulated joints after freejoint) INTERLEAVES
+# passive wheels:
+#   0-4   left leg    5-6   passive L wheels
+#   7-10  neck/head   11-15 right leg
+#   16-17 passive R wheels
+# But pose rewards go through ``_servo_joint_pos`` / ``_servo_default_joint_pos``
+# which STRIP every ``passive_*`` joint and return the canonical 14-servo view
+# (same layout as the wheel-less walk model). Indexing the 14-D tensor with the
+# MuJoCo-18 positions (e.g. 15) triggers a CUDA device-side assert — that is
+# what killed the 2026-09-05 roller-standup full run.
 #
-# Seul _LEG_JOINTS est consommé (par les récompenses de pose). _NECK_JOINTS et
-# _WHEEL_JOINTS servent à la documentation et au test d'indices : le cou est
-# résolu par NOM (neck_joint_pos_l2 appelle find_joints(r".*(neck|head).*") à
-# chaque pas) et les roues par la regex ^passive_.*.
-_LEG_JOINTS   = [0, 1, 2, 3, 4, 11, 12, 13, 14, 15]
-_NECK_JOINTS  = [7, 8, 9, 10]
-_WHEEL_JOINTS = [5, 6, 16, 17]
+# Reward params MUST use the servo-view indices below. MuJoCo-order tables are
+# kept only for documentation + the model-order lock test.
+_LEG_JOINTS = [0, 1, 2, 3, 4, 9, 10, 11, 12, 13]  # servo-view (14-D)
+_NECK_JOINTS = [5, 6, 7, 8]  # servo-view
+_MUJOCO_LEG_JOINTS = [0, 1, 2, 3, 4, 11, 12, 13, 14, 15]
+_MUJOCO_NECK_JOINTS = [7, 8, 9, 10]
+_MUJOCO_WHEEL_JOINTS = [5, 6, 16, 17]
+# Back-compat alias used by older docs/tests that inspect MuJoCo order.
+_WHEEL_JOINTS = _MUJOCO_WHEEL_JOINTS
 
 # Récompenses de PATINAGE de l'env roller : aucun sens quand on est par terre.
 # feet_flat : les lames ne sont PAS à plat pendant la montée → combattrait le geste.

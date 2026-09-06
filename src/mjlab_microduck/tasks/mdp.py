@@ -3796,6 +3796,66 @@ def standing_phase(
     return phase.unsqueeze(-1)  # Shape: (num_envs, 1)
 
 
+def feet_air_time_forward(
+    env: ManagerBasedRlEnv,
+    sensor_name: str,
+    threshold_min: float = 0.05,
+    threshold_max: float = 0.5,
+    command_name: str = "twist",
+    command_threshold: float = 0.1,
+) -> torch.Tensor:
+    """feet_air_time gated by actual forward progress (sprint task).
+
+    Stock feet_air_time pays for long swings regardless of where the robot
+    goes — an un-gated version is farmable by stepping high in place. Encode
+    the maneuver in the gate: each in-window foot-air step pays proportionally
+    to clamp(vx_actual / vx_commanded, 0, 1). Only active for forward commands
+    above ``command_threshold``.
+    """
+    from mjlab.tasks.velocity.mdp import feet_air_time as _template_air_time
+
+    # Reuse the template's bookkeeping (air-time mean logging etc.) then gate.
+    base = _template_air_time(
+        env,
+        sensor_name=sensor_name,
+        threshold_min=threshold_min,
+        threshold_max=threshold_max,
+        command_name=command_name,
+        command_threshold=0.0,  # we apply our own forward gate below
+    )
+    command = env.command_manager.get_command(command_name)
+    cmd_vx = command[:, 0]
+    vx = env.scene["robot"].data.root_link_lin_vel_b[:, 0]
+    progress = torch.clamp(vx / torch.clamp(cmd_vx, min=1e-3), 0.0, 1.0)
+    env.extras["log"]["Metrics/air_time_forward_progress"] = progress.mean()
+    scale = (cmd_vx > command_threshold).float()
+    return base * progress * scale
+
+
+def air_time_window_curriculum(
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor,
+    reward_name: str,
+    window_stages: list[dict],
+) -> torch.Tensor:
+    """Shift feet_air_time [threshold_min, threshold_max] up by training stage.
+
+    Starting the window above what a bootstrap gait can reach pays zero forever
+    and gives no gradient toward a flight phase. Start low, ratchet up.
+    """
+    del env_ids
+    term_cfg = env.reward_manager.get_term_cfg(reward_name)
+    current_min = window_stages[0]["threshold_min"]
+    current_max = window_stages[0]["threshold_max"]
+    for stage in window_stages:
+        if env.common_step_counter > stage["step"]:
+            current_min = stage["threshold_min"]
+            current_max = stage["threshold_max"]
+    term_cfg.params["threshold_min"] = current_min
+    term_cfg.params["threshold_max"] = current_max
+    return torch.tensor([current_min])
+
+
 def air_time_adaptive(
     env: ManagerBasedRlEnv,
     sensor_name: str,

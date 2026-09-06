@@ -67,6 +67,10 @@ from .microduck_roulade_env_cfg import (
     make_microduck_roulade_env_cfg,
     MicroduckRouladeRlCfg,
 )
+from .microduck_sprint_env_cfg import (
+    make_microduck_sprint_env_cfg,
+    MicroduckSprintRlCfg,
+)
 from .backlash import make_backlash_variant
 
 # Standard velocity task
@@ -222,6 +226,15 @@ register_mjlab_task(
     env_cfg=make_microduck_roulade_env_cfg(),
     play_env_cfg=make_microduck_roulade_env_cfg(play=True),
     rl_cfg=MicroduckRouladeRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# Sprint — barefoot flat top-speed specialisation of the velocity recipe.
+register_mjlab_task(
+    task_id="Mjlab-Sprint-Flat-MicroDuck",
+    env_cfg=make_microduck_sprint_env_cfg(),
+    play_env_cfg=make_microduck_sprint_env_cfg(play=True),
+    rl_cfg=MicroduckSprintRlCfg,
     runner_cls=MicroduckOnPolicyRunner,
 )
 

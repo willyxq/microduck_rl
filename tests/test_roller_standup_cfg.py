@@ -119,20 +119,20 @@ def test_task_is_registered():
     assert "Mjlab-RollerStandUp-Flat-MicroDuck" in list_tasks()
 
 
-def test_joint_indices_match_actual_roller_model():
-    """Verrou : les roues passives sont intercalées dans l'ordre des joints.
+def test_mujoco_joint_order_tables_match_roller_model():
+    """Lock the MuJoCo-18 interleaved layout (wheels between legs/neck).
 
-    Réutiliser les indices du standup ([0-4, 9-13]) donnerait des récompenses
-    qui pointent sur des roues. Ce test compile le vrai MjSpec du robot rollers
-    et vérifie les noms aux indices utilisés. Pur CPU, pas de sim.
+    Pose rewards do NOT index with these tables — they use the servo-view
+    ``_LEG_JOINTS`` (see ``test_reward_joint_indices_are_servo_view``). This
+    test only locks the documented MuJoCo order helpers.
     """
     import mujoco
 
     from mjlab_microduck.robot.microduck_constants import get_walk_rollers_spec
     from mjlab_microduck.tasks.microduck_roller_standup_env_cfg import (
-        _LEG_JOINTS,
-        _NECK_JOINTS,
-        _WHEEL_JOINTS,
+        _MUJOCO_LEG_JOINTS,
+        _MUJOCO_NECK_JOINTS,
+        _MUJOCO_WHEEL_JOINTS,
     )
 
     model = get_walk_rollers_spec().compile()
@@ -142,18 +142,34 @@ def test_joint_indices_match_actual_roller_model():
         if model.jnt_type[j] != mujoco.mjtJoint.mjJNT_FREE
     ]
 
-    assert [articulated[i] for i in _LEG_JOINTS] == [
+    assert [articulated[i] for i in _MUJOCO_LEG_JOINTS] == [
         "left_hip_yaw", "left_hip_roll", "left_hip_pitch", "left_knee", "left_ankle",
         "right_hip_yaw", "right_hip_roll", "right_hip_pitch", "right_knee", "right_ankle",
     ]
-    assert [articulated[i] for i in _NECK_JOINTS] == [
+    assert [articulated[i] for i in _MUJOCO_NECK_JOINTS] == [
         "neck_pitch", "head_pitch", "head_yaw", "head_roll",
     ]
-    assert [articulated[i] for i in _WHEEL_JOINTS] == [
+    assert [articulated[i] for i in _MUJOCO_WHEEL_JOINTS] == [
         "passive_LF_wheel", "passive_LR_wheel", "passive_RF_wheel", "passive_RR_wheel",
     ]
-    # Aucun recouvrement, et les trois listes couvrent tous les joints.
-    assert len(set(_LEG_JOINTS) | set(_NECK_JOINTS) | set(_WHEEL_JOINTS)) == len(articulated)
+    assert len(set(_MUJOCO_LEG_JOINTS) | set(_MUJOCO_NECK_JOINTS) | set(_MUJOCO_WHEEL_JOINTS)) == len(
+        articulated
+    )
+
+
+def test_reward_joint_indices_are_servo_view():
+    """Pose rewards index the 14-D servo tensor, NOT the MuJoCo-18 layout.
+
+    ``_servo_joint_pos`` strips ``passive_*`` wheels, so leg indices must be
+    the walk-model layout [0-4, 9-13]. Using MuJoCo-18 indices (up to 15)
+    caused the 2026-09-05 CUDA device-side assert in ``pose_target_match``.
+    """
+    from mjlab_microduck.tasks.microduck_roller_standup_env_cfg import _LEG_JOINTS, _NECK_JOINTS
+
+    assert _LEG_JOINTS == [0, 1, 2, 3, 4, 9, 10, 11, 12, 13]
+    assert _NECK_JOINTS == [5, 6, 7, 8]
+    assert max(_LEG_JOINTS) < 14
+    assert max(_NECK_JOINTS) < 14
 
 
 def test_recovery_rewards_present_with_expected_weights():
