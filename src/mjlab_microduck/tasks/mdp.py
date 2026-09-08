@@ -4691,6 +4691,34 @@ class RelativeHeadingVelocityCommandCfg(UniformVelocityCommandCfg):
         return RelativeHeadingVelocityCommand(self, env)
 
 
+class SpawnHeadingVelocityCommand(RelativeHeadingVelocityCommand):
+    """Expose error from the episode's spawn heading in command slot 2.
+
+    Unlike :class:`RelativeHeadingVelocityCommand`, this does not ask the robot
+    to turn toward a random world heading.  Every resample captures the current
+    heading, then subsequent drift appears as a signed, closed-loop correction
+    command.  This gives a running actor the missing information required to
+    steer back without changing the shared 61D observation layout.
+    """
+
+    def __init__(self, cfg, env: ManagerBasedRlEnv):
+        super().__init__(cfg, env)
+        self._heading_max = cfg.heading_error_clip
+
+    def _resample_command(self, env_ids: torch.Tensor) -> None:
+        super()._resample_command(env_ids)
+        self._target_heading_w[env_ids] = self.robot.data.heading_w[env_ids]
+        self.vel_command_b[env_ids, 2] = 0.0
+
+
+@_dataclass(kw_only=True)
+class SpawnHeadingVelocityCommandCfg(VelocityCommandCommandOnlyCfg):
+    heading_error_clip: float = 1.0
+
+    def build(self, env: ManagerBasedRlEnv) -> "SpawnHeadingVelocityCommand":
+        return SpawnHeadingVelocityCommand(self, env)
+
+
 def heading_tracking_reward(
     env: ManagerBasedRlEnv,
     command_name: str,
@@ -7246,3 +7274,138 @@ def roulade_lateral_velocity_penalty(
     """Body-frame lateral (y) linear velocity² — keeps the roll straight."""
     asset: Entity = env.scene[asset_cfg.name]
     return torch.nan_to_num(asset.data.root_link_lin_vel_b[:, 1].pow(2), nan=0.0)
+
+
+# --- Running task helpers (ported from microduck-playground) ---
+
+def running_forward_progress_from_velocity(
+    velocity_x: torch.Tensor,
+    speed_cap: float = 1.2,
+) -> torch.Tensor:
+    """Linear forward-speed objective used by the running task.
+
+    Unlike :func:`forward_speed_reward`, this deliberately does not saturate at
+    ordinary walking speed.  Backward motion receives no reward and very large
+    velocities are capped so a single physics outlier cannot become a jackpot.
+    """
+    if speed_cap <= 0.0:
+        raise ValueError("speed_cap must be positive")
+    velocity_x = torch.nan_to_num(velocity_x, nan=0.0, posinf=speed_cap, neginf=0.0)
+    return torch.clamp(velocity_x, min=0.0, max=speed_cap) / speed_cap
+
+
+def running_forward_progress(
+    env: ManagerBasedRlEnv,
+    speed_cap: float = 1.2,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Reward forward trunk speed with useful gradient above walking speeds."""
+    asset: Entity = env.scene[asset_cfg.name]
+    return running_forward_progress_from_velocity(
+        asset.data.root_link_lin_vel_b[:, 0], speed_cap=speed_cap
+    )
+
+
+def running_flight_event(
+    env: ManagerBasedRlEnv,
+    sensor_name: str = "feet_ground_contact",
+    min_forward_speed: float = 0.3,
+    max_tilt_deg: float = 50.0,
+    min_airborne_steps: int = 3,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Pay once when a stable, forward-moving flight phase begins.
+
+    This is intentionally an *event*, not an airtime reward: extending an
+    uncontrolled ballistic phase never increases the return.  Requiring three
+    consecutive 50 Hz samples rejects one-frame contact-sensor flicker.  The
+    state cache is reset on a fresh episode so spawning in the air cannot
+    collect a reward.
+    """
+    if min_airborne_steps < 1:
+        raise ValueError("min_airborne_steps must be at least one")
+    sensor = env.scene[sensor_name]
+    contacts = sensor.data.found.reshape(env.num_envs, -1).any(dim=-1)
+    airborne = ~contacts
+
+    air_steps = getattr(env, "_running_airborne_steps", None)
+    if air_steps is None or air_steps.shape != airborne.shape:
+        air_steps = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+    fresh_episode = env.episode_length_buf == 0
+    air_steps = torch.where(airborne, air_steps + 1, torch.zeros_like(air_steps))
+    air_steps = torch.where(fresh_episode, torch.zeros_like(air_steps), air_steps)
+    onset = air_steps == min_airborne_steps
+    env._running_airborne_steps = air_steps
+
+    asset: Entity = env.scene[asset_cfg.name]
+    forward = torch.nan_to_num(asset.data.root_link_lin_vel_b[:, 0], nan=0.0)
+    gravity_z = torch.nan_to_num(asset.data.projected_gravity_b[:, 2], nan=0.0)
+    max_tilt_cos = math.cos(math.radians(max_tilt_deg))
+    stable = (-gravity_z) >= max_tilt_cos
+    return (onset & stable & (forward >= min_forward_speed)).float()
+
+
+def running_planar_drift_cost_from_values(
+    lateral_velocity: torch.Tensor,
+    yaw_rate: torch.Tensor,
+    lateral_command: torch.Tensor,
+    yaw_command: torch.Tensor,
+    lateral_weight: float = 4.0,
+) -> torch.Tensor:
+    """Positive straight-line error cost; use with a negative reward weight."""
+    lateral_error = torch.nan_to_num(lateral_velocity - lateral_command, nan=0.0)
+    yaw_error = torch.nan_to_num(yaw_rate - yaw_command, nan=0.0)
+    return yaw_error.square() + lateral_weight * lateral_error.square()
+
+
+def running_planar_drift_cost(
+    env: ManagerBasedRlEnv,
+    command_name: str = "twist",
+    lateral_weight: float = 4.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+    """Penalize body-frame lateral drift and yaw-rate command error."""
+    asset: Entity = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    return running_planar_drift_cost_from_values(
+        asset.data.root_link_lin_vel_b[:, 1],
+        asset.data.root_link_ang_vel_b[:, 2],
+        command[:, 1],
+        command[:, 2],
+        lateral_weight=lateral_weight,
+    )
+
+
+def running_command_ranges_curriculum(
+    env: ManagerBasedRlEnv,
+    env_ids: torch.Tensor,
+    command_name: str,
+    speed_stages: list[dict],
+) -> torch.Tensor:
+    """Advance a forward-only running speed band over training.
+
+    A band avoids spending most samples near zero while an explicit standing
+    bucket in the command cfg still trains the deployment idle state.
+    """
+    del env_ids
+
+    from typing import cast
+
+    from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+
+    command_term = env.command_manager.get_term(command_name)
+    assert command_term is not None, f"Command term '{command_name}' not found"
+    cfg = cast(UniformVelocityCommandCfg, command_term.cfg)
+
+    current_min = float(speed_stages[0]["min_speed"])
+    current_max = float(speed_stages[0]["max_speed"])
+    for stage in speed_stages:
+        if env.common_step_counter >= stage["step"]:
+            current_min = float(stage["min_speed"])
+            current_max = float(stage["max_speed"])
+    if not (0.0 <= current_min <= current_max):
+        raise ValueError(f"invalid running speed band: {(current_min, current_max)}")
+
+    cfg.ranges.lin_vel_x = (current_min, current_max)
+    return torch.tensor([current_max], device=env.device)
+

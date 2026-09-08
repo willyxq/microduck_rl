@@ -71,6 +71,11 @@ from .microduck_sprint_env_cfg import (
     make_microduck_sprint_env_cfg,
     MicroduckSprintRlCfg,
 )
+from .microduck_running_env_cfg import (
+    make_microduck_running_env_cfg,
+    MicroduckRunningRlCfg,
+    MicroduckRunningFlightRlCfg,
+)
 from .backlash import make_backlash_variant
 
 # Standard velocity task
@@ -235,6 +240,24 @@ register_mjlab_task(
     env_cfg=make_microduck_sprint_env_cfg(),
     play_env_cfg=make_microduck_sprint_env_cfg(play=True),
     rl_cfg=MicroduckSprintRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+
+# Running — forward-progress max-speed recipe (Hannes / playground port).
+register_mjlab_task(
+    task_id="Mjlab-Running-Flat-MicroDuck",
+    env_cfg=make_microduck_running_env_cfg(),
+    play_env_cfg=make_microduck_running_env_cfg(play=True),
+    rl_cfg=MicroduckRunningRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+register_mjlab_task(
+    task_id="Mjlab-RunningFlight-Flat-MicroDuck",
+    env_cfg=make_microduck_running_env_cfg(flight_reward_weight=1.5),
+    play_env_cfg=make_microduck_running_env_cfg(play=True, flight_reward_weight=1.5),
+    rl_cfg=MicroduckRunningFlightRlCfg,
     runner_cls=MicroduckOnPolicyRunner,
 )
 
