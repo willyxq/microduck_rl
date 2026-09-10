@@ -106,7 +106,10 @@ def main(cfg: Config) -> None:
     runner.export_policy_to_onnx(str(output_dir), f"{cfg.mode}_policy.onnx")
 
     policy = runner.get_inference_policy(device=device)
-    observations, _ = env.reset()
+    # mjlab's actuator delay buffers are touched inside the runner's
+    # inference-mode rollout, so reset them under the same mode.
+    with torch.inference_mode():
+        observations, _ = env.reset()
     steps = round(reference_duration / raw_env.step_dt)
     reward_sum = torch.zeros(cfg.num_envs, device=device)
     speed_sum = torch.zeros_like(reward_sum)
