@@ -50,6 +50,8 @@ def main() -> None:
     motion = load_motion(args.motion)
     model = mujoco.MjModel.from_xml_path(SCENE)
     model.opt.timestep = 0.005
+    model.vis.global_.offwidth = args.width
+    model.vis.global_.offheight = args.height
     data = mujoco.MjData(model)
 
     actuator_joint_ids = model.actuator_trnid[:, 0]
