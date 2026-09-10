@@ -68,6 +68,10 @@ from .microduck_roulade_env_cfg import (
     MicroduckRouladeRlCfg,
 )
 from .backlash import make_backlash_variant
+from .microduck_motionlab_moonwalk_backward_env_cfg import (
+    GeneratedRlCfg as MotionLabMoonwalkBackwardRlCfg,
+    make_generated_env_cfg as make_motionlab_moonwalk_backward_env_cfg,
+)
 
 # Standard velocity task
 register_mjlab_task(
@@ -83,6 +87,15 @@ register_mjlab_task(
     env_cfg=make_microduck_velocity_env_cfg(rough=True),
     play_env_cfg=make_microduck_velocity_env_cfg(play=True, rough=True),
     rl_cfg=MicroduckRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+# Exact task overlay published by fffiloni/microduck-moonwalk-backward-55e6af.
+register_mjlab_task(
+    task_id="Mjlab-MotionLabMoonwalkBackward-Flat-MicroDuck",
+    env_cfg=make_motionlab_moonwalk_backward_env_cfg(),
+    play_env_cfg=make_motionlab_moonwalk_backward_env_cfg(play=True),
+    rl_cfg=MotionLabMoonwalkBackwardRlCfg,
     runner_cls=MicroduckOnPolicyRunner,
 )
 
