@@ -35,6 +35,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=720)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument(
+        "--free-base",
+        action="store_true",
+        help="Do not use the default virtual gantry (plain BC may fall).",
+    )
     return parser.parse_args()
 
 
@@ -62,7 +67,9 @@ def main() -> None:
         model, mujoco.mjtObj.mjOBJ_JOINT, "trunk_base_freejoint"
     )
     free_qpos = int(model.jnt_qposadr[free_joint])
-    data.qpos[free_qpos : free_qpos + 7] = [0.0, 0.0, 0.125, 1.0, 0.0, 0.0, 0.0]
+    free_qvel = int(model.jnt_dofadr[free_joint])
+    root_pose = np.array([0.0, 0.0, 0.125, 1.0, 0.0, 0.0, 0.0])
+    data.qpos[free_qpos : free_qpos + 7] = root_pose
     data.qpos[joint_qpos] = home
     data.ctrl[:] = home
     mujoco.mj_forward(model, data)
@@ -126,6 +133,12 @@ def main() -> None:
         last_action = action
         for _ in range(round(control_dt / model.opt.timestep)):
             mujoco.mj_step(model, data)
+            if not args.free_base:
+                # A virtual gantry isolates trajectory imitation from dynamic
+                # balance. Free-base BC needs balance/recovery demonstrations.
+                data.qpos[free_qpos : free_qpos + 7] = root_pose
+                data.qvel[free_qvel : free_qvel + 6] = 0.0
+                mujoco.mj_forward(model, data)
             simulation_time += model.opt.timestep
             if simulation_time + 1e-9 >= next_frame_time:
                 renderer.update_scene(data, camera=camera)
@@ -141,6 +154,7 @@ def main() -> None:
         "video": str(args.output),
         "duration_s": total_s,
         "frames": len(frames),
+        "base_constraint": "free" if args.free_base else "virtual_gantry",
         "minimum_trunk_height_m": min(root_heights),
         "maximum_trunk_tilt_deg": math.degrees(max(tilts)),
         "final_xy_m": data.qpos[free_qpos : free_qpos + 2].tolist(),

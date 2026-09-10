@@ -39,6 +39,11 @@ uv run python scripts/record_imitation_demo.py \
 Replace the keyframes in the JSON with a retargeted trajectory to teach a
 different cyclic motion.
 
+The renderer uses a virtual root gantry by default. This intentionally isolates
+“did the network learn the demonstrated joint motion?” from the separate,
+harder balance problem. Pass `--free-base` to expose the plain BC policy to
+full-body dynamics; this tiny phase-only example is expected to fall.
+
 ## What this example does not solve
 
 Plain behavior cloning sees only states in the demonstrations. After a push or
@@ -52,5 +57,6 @@ production motion-imitation system normally adds:
 
 Those methods retain the reusable motion-tracking objective while using RL or
 generative modeling to improve robustness and multimodality. Therefore this
-demo proves the imitation data and deployment path; it is not a claim of
-push-robust locomotion or human-mocap retargeting.
+demo proves the imitation data and deployment path under a virtual gantry; it
+is not a claim of free-base balance, push-robust locomotion, or human-mocap
+retargeting.
