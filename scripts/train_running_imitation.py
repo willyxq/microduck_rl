@@ -44,7 +44,7 @@ def main(cfg: Config) -> None:
     env_cfg = load_env_cfg(cfg.task_id, play=False)
     env_cfg.seed = cfg.seed
     env_cfg.scene.num_envs = cfg.num_envs
-    env_cfg.episode_length_s = reference_duration
+    env_cfg.episode_length_s = 2.0 * reference_duration
     env_cfg.curriculum.clear()
     command = env_cfg.commands["twist"]
     command.ranges.lin_vel_x = (cfg.speed, cfg.speed)
@@ -110,17 +110,22 @@ def main(cfg: Config) -> None:
     # inference-mode rollout, so reset them under the same mode.
     with torch.inference_mode():
         observations, _ = env.reset()
-    steps = round(reference_duration / raw_env.step_dt)
+    warmup_steps = round(1.0 / raw_env.step_dt)
+    steps = round((reference_duration + 1.0) / raw_env.step_dt)
     reward_sum = torch.zeros(cfg.num_envs, device=device)
     speed_sum = torch.zeros_like(reward_sum)
     fell = torch.zeros(cfg.num_envs, dtype=torch.bool, device=device)
-    for _ in range(steps):
+    measured_steps = 0
+    for step in range(steps):
         with torch.inference_mode():
             actions = policy(observations)
-            observations, rewards, dones, _ = env.step(actions)
-        reward_sum += rewards
-        speed_sum += raw_env.scene["robot"].data.root_link_lin_vel_b[:, 0]
-        fell |= dones.bool()
+            observations, rewards, dones, extras = env.step(actions)
+        timed_out = extras.get("time_outs", torch.zeros_like(dones)).bool()
+        fell |= dones.bool() & ~timed_out
+        if step >= warmup_steps:
+            reward_sum += rewards
+            speed_sum += raw_env.scene["robot"].data.root_link_lin_vel_b[:, 0]
+            measured_steps += 1
 
     metrics = {
         "mode": cfg.mode,
@@ -131,8 +136,8 @@ def main(cfg: Config) -> None:
         "iterations": cfg.iterations,
         "num_envs": cfg.num_envs,
         "training_seconds": training_seconds,
-        "mean_reward_per_step": float((reward_sum / steps).mean()),
-        "mean_forward_speed_mps": float((speed_sum / steps).mean()),
+        "mean_reward_per_step": float((reward_sum / measured_steps).mean()),
+        "mean_forward_speed_mps": float((speed_sum / measured_steps).mean()),
         "survival_fraction": float((~fell).float().mean()),
         "checkpoint": str(checkpoint_path),
         "onnx": str(output_dir / f"{cfg.mode}_policy.onnx"),
