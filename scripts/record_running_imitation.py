@@ -1,127 +1,129 @@
 #!/usr/bin/env python3
-"""Record teacher, DeepMimic, or AMP running ONNX policy."""
+"""Record a running checkpoint in the same mjlab/BAM physics used to train it."""
 
 from __future__ import annotations
 
-import argparse
 import json
 import math
 import os
-import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
 import imageio.v3 as iio
-import mujoco
 import numpy as np
+import torch
+import tyro
+from mjlab.envs import ManagerBasedRlEnv
+from mjlab.rl import RslRlVecEnvWrapper
+from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
+from mjlab.utils.torch import configure_torch_backends
+from rsl_rl.runners import OnPolicyRunner
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from infer_policy import MICRODUCK_XML, PolicyInference  # noqa: E402
+import mjlab_microduck.tasks  # noqa: F401
+from mjlab_microduck.imitation_rl import RunningReferenceWrapper
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--policy", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument(
-        "--mode", required=True, choices=("teacher", "deepmimic", "amp")
+@dataclass
+class Config:
+    mode: str
+    checkpoint_file: str
+    reference_file: str
+    output_file: str
+    speed: float = 2.2
+    duration_s: float = 8.0
+    seed: int = 0
+    fps: int = 30
+    task_id: str = "Mjlab-Running-Flat-MicroDuck"
+
+
+def main(cfg: Config) -> None:
+    if cfg.mode not in {"teacher", "deepmimic", "amp"}:
+        raise ValueError("mode must be teacher, deepmimic, or amp")
+    configure_torch_backends()
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    env_cfg = load_env_cfg(cfg.task_id, play=True)
+    env_cfg.seed = cfg.seed
+    env_cfg.scene.num_envs = 1
+    env_cfg.episode_length_s = cfg.duration_s + 1.0
+    env_cfg.terminations.clear()
+    env_cfg.viewer.distance = 0.62
+    env_cfg.viewer.azimuth = 135.0
+    env_cfg.viewer.elevation = -14.0
+    command = env_cfg.commands["twist"]
+    command.ranges.lin_vel_x = (cfg.speed, cfg.speed)
+    command.ranges.lin_vel_y = (0.0, 0.0)
+    command.ranges.ang_vel_z = (0.0, 0.0)
+    command.rel_standing_envs = 0.0
+    command.resampling_time_range = (cfg.duration_s + 1.0, cfg.duration_s + 1.0)
+
+    agent_cfg = load_rl_cfg(cfg.task_id)
+    raw_env = ManagerBasedRlEnv(cfg=env_cfg, device=device, render_mode="rgb_array")
+    base_env = RslRlVecEnvWrapper(raw_env, clip_actions=agent_cfg.clip_actions)
+    wrapper_mode = "deepmimic" if cfg.mode == "deepmimic" else "amp"
+    env = RunningReferenceWrapper(base_env, cfg.reference_file, mode=wrapper_mode)
+    runner_cls = load_runner_cls(cfg.task_id) or OnPolicyRunner
+    runner = runner_cls(env, asdict(agent_cfg), device=device)
+    runner.load(
+        cfg.checkpoint_file,
+        load_cfg={
+            "actor": True,
+            "critic": False,
+            "optimizer": False,
+            "iteration": False,
+            "rnd": False,
+        },
+        map_location=device,
     )
-    parser.add_argument("--speed", type=float, default=2.2)
-    parser.add_argument("--reference-period", type=float, default=4.0)
-    parser.add_argument("--stand-seconds", type=float, default=1.0)
-    parser.add_argument("--run-seconds", type=float, default=8.0)
-    parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--width", type=int, default=640)
-    parser.add_argument("--height", type=int, default=640)
-    args = parser.parse_args()
+    policy = runner.get_inference_policy(device=device)
 
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    model = mujoco.MjModel.from_xml_path(MICRODUCK_XML)
-    model.opt.timestep = 0.005
-    model.vis.global_.offwidth = args.width
-    model.vis.global_.offheight = args.height
-    data = mujoco.MjData(model)
-    policy = PolicyInference(
-        model,
-        data,
-        walking_onnx_path=args.policy,
-        new_cmd_obs=True,
-        use_projected_gravity=True,
-    )
-
-    freejoint = mujoco.mj_name2id(
-        model, mujoco.mjtObj.mjOBJ_JOINT, "trunk_base_freejoint"
-    )
-    root_qpos = int(model.jnt_qposadr[freejoint])
-    root_qvel = int(model.jnt_dofadr[freejoint])
-    data.qpos[root_qpos : root_qpos + 7] = [0, 0, 0.125, 1, 0, 0, 0]
-    data.qpos[policy.joint_qpos_indices] = policy.default_pose
-    data.ctrl[:] = policy.default_pose
-    mujoco.mj_forward(model, data)
-
-    renderer = mujoco.Renderer(model, height=args.height, width=args.width)
-    camera = mujoco.MjvCamera()
-    mujoco.mjv_defaultCamera(camera)
-    camera.distance = 0.72
-    camera.elevation = -14
-    camera.azimuth = 130
-
-    control_dt = 0.02
-    total_steps = round((args.stand_seconds + args.run_seconds) / control_dt)
-    stand_steps = round(args.stand_seconds / control_dt)
-    frames = []
-    next_frame_time = 0.0
-    speed_samples = []
+    observations = env.get_observations()
+    robot = raw_env.scene["robot"]
+    frames: list[np.ndarray] = []
+    next_frame_s = 0.0
+    steps = round(cfg.duration_s / raw_env.step_dt)
+    warmup_steps = round(1.0 / raw_env.step_dt)
+    speeds = []
     max_tilt = 0.0
     min_height = float("inf")
-    for step in range(total_steps):
-        run_time = max(0.0, step * control_dt - args.stand_seconds)
-        command = np.zeros(13, dtype=np.float32)
-        if step >= stand_steps:
-            command[0] = args.speed
-            if args.mode == "deepmimic":
-                phase = run_time / args.reference_period
-                command[3] = math.sin(2 * math.pi * phase)
-                command[4] = math.cos(2 * math.pi * phase)
-        policy.command = command
-        action = policy.infer()
-        policy.apply_action(action)
-        for _ in range(4):
-            mujoco.mj_step(model, data)
-        if step * control_dt + 1e-9 >= next_frame_time:
-            camera.lookat[:] = data.xpos[policy.trunk_base_id]
-            renderer.update_scene(data, camera=camera)
-            frames.append(renderer.render().copy())
-            next_frame_time += 1.0 / args.fps
-        gravity = policy.get_projected_gravity()
+    for step in range(steps):
+        with torch.inference_mode():
+            actions = policy(observations)
+            observations, _, _, _ = env.step(actions)
+        elapsed = (step + 1) * raw_env.step_dt
+        if elapsed + 1e-9 >= next_frame_s:
+            frame = raw_env.render()
+            frames.append(np.asarray(frame).copy())
+            next_frame_s += 1.0 / cfg.fps
+        gravity_z = float(robot.data.projected_gravity_b[0, 2])
         max_tilt = max(
             max_tilt,
-            math.degrees(math.acos(float(np.clip(-gravity[2], -1.0, 1.0)))),
+            math.degrees(math.acos(float(np.clip(-gravity_z, -1.0, 1.0)))),
         )
-        min_height = min(min_height, float(data.qpos[root_qpos + 2]))
-        if step >= stand_steps:
-            quat = data.qpos[root_qpos + 3 : root_qpos + 7].astype(np.float32)
-            world_velocity = data.qvel[root_qvel : root_qvel + 3].astype(np.float32)
-            speed_samples.append(float(policy.quat_rotate_inverse(quat, world_velocity)[0]))
+        min_height = min(min_height, float(robot.data.root_link_pos_w[0, 2]))
+        if step >= warmup_steps:
+            speeds.append(float(robot.data.root_link_lin_vel_b[0, 0]))
 
-    renderer.close()
-    iio.imwrite(output, frames, fps=args.fps, codec="libx264", quality=8)
+    output = Path(cfg.output_file)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    iio.imwrite(output, frames, fps=cfg.fps, codec="libx264", quality=8)
     metrics = {
-        "mode": args.mode,
-        "policy": args.policy,
+        "mode": cfg.mode,
+        "checkpoint": cfg.checkpoint_file,
+        "physics": "mjlab_mujoco_warp_bam",
         "video": str(output),
-        "mean_body_forward_speed_mps": float(np.mean(speed_samples)),
+        "mean_body_forward_speed_mps": float(np.mean(speeds)),
         "minimum_trunk_height_m": min_height,
         "maximum_tilt_deg": max_tilt,
-        "finite_state": bool(np.all(np.isfinite(data.qpos))),
+        "finite_state": bool(torch.isfinite(robot.data.root_link_pos_w).all()),
     }
     output.with_suffix(".json").write_text(
         json.dumps(metrics, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps(metrics, indent=2))
+    env.close()
 
 
 if __name__ == "__main__":
-    main()
+    main(tyro.cli(Config))
