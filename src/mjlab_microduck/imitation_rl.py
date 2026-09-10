@@ -6,9 +6,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from rsl_rl.algorithms import PPO
 from torch import nn
 from torch.nn import functional as F
-from rsl_rl.algorithms import PPO
 
 PHYSICAL_OBS_DIM = 48
 HEAD_COMMAND_START = 51
