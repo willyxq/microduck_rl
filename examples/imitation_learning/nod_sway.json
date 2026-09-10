@@ -1,0 +1,32 @@
+{
+  "name": "nod_sway",
+  "description": "A hand-authored demonstration: gentle planted-foot sway with two head nods.",
+  "period_s": 4.0,
+  "joint_order": [
+    "left_hip_yaw",
+    "left_hip_roll",
+    "left_hip_pitch",
+    "left_knee",
+    "left_ankle",
+    "neck_pitch",
+    "head_pitch",
+    "head_yaw",
+    "head_roll",
+    "right_hip_yaw",
+    "right_hip_roll",
+    "right_hip_pitch",
+    "right_knee",
+    "right_ankle"
+  ],
+  "keyframes": [
+    {"phase": 0.0,   "action": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
+    {"phase": 0.125, "action": [0, 0.07, 0, 0, 0, 0, 0.17, 0, -0.035, 0, 0.07, 0, 0, 0]},
+    {"phase": 0.25,  "action": [0, 0.10, 0, 0, 0, 0, -0.10, 0, -0.05, 0, 0.10, 0, 0, 0]},
+    {"phase": 0.375, "action": [0, 0.07, 0, 0, 0, 0, 0.17, 0, -0.035, 0, 0.07, 0, 0, 0]},
+    {"phase": 0.5,   "action": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},
+    {"phase": 0.625, "action": [0, -0.07, 0, 0, 0, 0, 0.17, 0, 0.035, 0, -0.07, 0, 0, 0]},
+    {"phase": 0.75,  "action": [0, -0.10, 0, 0, 0, 0, -0.10, 0, 0.05, 0, -0.10, 0, 0, 0]},
+    {"phase": 0.875, "action": [0, -0.07, 0, 0, 0, 0, 0.17, 0, 0.035, 0, -0.07, 0, 0, 0]},
+    {"phase": 1.0,   "action": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}
+  ]
+}
