@@ -31,11 +31,13 @@ class Config:
     speed: float = 2.2
     seed: int = 31
     task_id: str = "Mjlab-Running-Flat-MicroDuck"
+    amp_reward_weight: float | None = None
+    task_reward_weight: float | None = None
 
 
 def main(cfg: Config) -> None:
-    if cfg.mode not in {"deepmimic", "amp"}:
-        raise ValueError("mode must be deepmimic or amp")
+    if cfg.mode not in {"deepmimic", "amp", "deepmimic_amp"}:
+        raise ValueError("mode must be deepmimic, amp, or deepmimic_amp")
     configure_torch_backends()
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     reference = __import__("numpy").load(cfg.reference_file)
@@ -61,15 +63,25 @@ def main(cfg: Config) -> None:
     train_cfg["experiment_name"] = f"running_{cfg.mode}"
     train_cfg["run_name"] = cfg.mode
     train_cfg["algorithm"]["symmetry_cfg"] = None
-    if cfg.mode == "amp":
+    if cfg.mode in {"amp", "deepmimic_amp"}:
+        default_amp_weight = 0.35 if cfg.mode == "deepmimic_amp" else 0.7
+        default_task_weight = 0.65 if cfg.mode == "deepmimic_amp" else 0.3
         train_cfg["algorithm"]["class_name"] = (
             "mjlab_microduck.imitation_rl:AmpPPO"
         )
         train_cfg["algorithm"].update(
             {
                 "expert_data_path": cfg.reference_file,
-                "amp_reward_weight": 0.7,
-                "task_reward_weight": 0.3,
+                "amp_reward_weight": (
+                    cfg.amp_reward_weight
+                    if cfg.amp_reward_weight is not None
+                    else default_amp_weight
+                ),
+                "task_reward_weight": (
+                    cfg.task_reward_weight
+                    if cfg.task_reward_weight is not None
+                    else default_task_weight
+                ),
                 "discriminator_learning_rate": 2e-4,
                 "discriminator_updates": 4,
                 "discriminator_batch_size": 4096,
@@ -129,9 +141,9 @@ def main(cfg: Config) -> None:
 
     metrics = {
         "mode": cfg.mode,
-        "teacher_checkpoint": cfg.teacher_checkpoint,
+        "initial_checkpoint": cfg.teacher_checkpoint,
         "reference_file": cfg.reference_file,
-        "warm_started_from_teacher_actor": True,
+        "warm_started_actor": True,
         "device": device,
         "iterations": cfg.iterations,
         "num_envs": cfg.num_envs,

@@ -36,11 +36,23 @@ class Config:
     seed: int = 0
     fps: int = 30
     task_id: str = "Mjlab-Running-Flat-MicroDuck"
+    motion_file: str | None = None
+    motion_scale: float = 1.0
 
 
 def main(cfg: Config) -> None:
-    if cfg.mode not in {"teacher", "deepmimic", "amp"}:
-        raise ValueError("mode must be teacher, deepmimic, or amp")
+    if cfg.mode not in {
+        "teacher",
+        "video_teacher",
+        "deepmimic",
+        "amp",
+        "deepmimic_amp",
+    }:
+        raise ValueError(
+            "mode must be teacher, video_teacher, deepmimic, amp, or deepmimic_amp"
+        )
+    if cfg.mode == "video_teacher" and not cfg.motion_file:
+        raise ValueError("video_teacher mode requires --motion-file")
     configure_torch_backends()
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     env_cfg = load_env_cfg(cfg.task_id, play=True)
@@ -61,7 +73,13 @@ def main(cfg: Config) -> None:
     agent_cfg = load_rl_cfg(cfg.task_id)
     raw_env = ManagerBasedRlEnv(cfg=env_cfg, device=device, render_mode="rgb_array")
     base_env = RslRlVecEnvWrapper(raw_env, clip_actions=agent_cfg.clip_actions)
-    wrapper_mode = "deepmimic" if cfg.mode == "deepmimic" else "amp"
+    wrapper_mode = (
+        "deepmimic"
+        if cfg.mode == "deepmimic"
+        else "deepmimic_amp"
+        if cfg.mode == "deepmimic_amp"
+        else "amp"
+    )
     env = RunningReferenceWrapper(base_env, cfg.reference_file, mode=wrapper_mode)
     runner_cls = load_runner_cls(cfg.task_id) or OnPolicyRunner
     runner = runner_cls(env, asdict(agent_cfg), device=device)
@@ -77,6 +95,13 @@ def main(cfg: Config) -> None:
         map_location=device,
     )
     policy = runner.get_inference_policy(device=device)
+    motion_offsets = None
+    if cfg.motion_file:
+        motion_offsets = torch.as_tensor(
+            np.load(cfg.motion_file)["action_offsets"],
+            dtype=torch.float32,
+            device=device,
+        )
 
     observations = env.get_observations()
     robot = raw_env.scene["robot"]
@@ -90,6 +115,11 @@ def main(cfg: Config) -> None:
     for step in range(steps):
         with torch.inference_mode():
             actions = policy(observations)
+            if cfg.mode == "video_teacher":
+                actions = (
+                    actions
+                    + cfg.motion_scale * motion_offsets[step % len(motion_offsets)]
+                )
             observations, _, _, _ = env.step(actions)
         elapsed = (step + 1) * raw_env.step_dt
         if elapsed + 1e-9 >= next_frame_s:

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 from tensordict import TensorDict
 
@@ -75,10 +76,11 @@ def _write_reference(path):
     np.savez(path, **zeros)
 
 
-def test_deepmimic_wrapper_injects_phase_and_rewards_exact_match(tmp_path):
+@pytest.mark.parametrize("mode", ["deepmimic", "deepmimic_amp"])
+def test_deepmimic_wrapper_injects_phase_and_rewards_exact_match(tmp_path, mode):
     path = tmp_path / "reference.npz"
     _write_reference(path)
-    env = RunningReferenceWrapper(_BaseEnv(), str(path), mode="deepmimic")
+    env = RunningReferenceWrapper(_BaseEnv(), str(path), mode=mode)
     observations = env.get_observations()
     assert observations["actor"][0, HEAD_COMMAND_START] == 0
     assert observations["actor"][0, HEAD_COMMAND_START + 1] == 1

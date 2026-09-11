@@ -23,7 +23,7 @@ class RunningReferenceWrapper:
     """
 
     def __init__(self, env, reference_file: str, mode: str = "deepmimic"):
-        if mode not in {"deepmimic", "amp"}:
+        if mode not in {"deepmimic", "amp", "deepmimic_amp"}:
             raise ValueError(f"unknown imitation mode: {mode}")
         self.env = env
         self.mode = mode
@@ -44,7 +44,7 @@ class RunningReferenceWrapper:
         return torch.as_tensor(array, dtype=torch.float32, device=self.device)
 
     def _inject_phase(self, observations):
-        if self.mode != "deepmimic":
+        if self.mode not in {"deepmimic", "deepmimic_amp"}:
             return observations
         observations = observations.clone()
         phase = self.reference_step.float() / self.reference_length
@@ -66,7 +66,7 @@ class RunningReferenceWrapper:
 
     def step(self, actions):
         observations, task_rewards, dones, extras = self.env.step(actions)
-        if self.mode == "deepmimic":
+        if self.mode in {"deepmimic", "deepmimic_amp"}:
             idx = self.reference_step
             actor_obs = observations["actor"]
             pose_error = torch.mean(

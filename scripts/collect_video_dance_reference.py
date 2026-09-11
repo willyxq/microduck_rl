@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect a reusable motion reference from the Hannes running policy."""
+"""Create a dynamically feasible MicroDuck expert rollout from video offsets."""
 
 from __future__ import annotations
 
@@ -24,34 +24,34 @@ import mjlab_microduck.tasks  # noqa: F401
 @dataclass
 class Config:
     checkpoint_file: str
+    motion_file: str
     output_file: str
-    speed: float = 2.2
-    num_envs: int = 128
+    num_envs: int = 512
     warmup_s: float = 1.0
-    duration_s: float = 4.0
-    seed: int = 23
+    motion_scale: float = 1.0
+    seed: int = 47
     task_id: str = "Mjlab-Running-Flat-MicroDuck"
-    canonical_reference_file: str | None = None
-
-
-def _yaw(quat: torch.Tensor) -> torch.Tensor:
-    w, x, y, z = quat.unbind(-1)
-    return torch.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
 
 
 def main(cfg: Config) -> None:
     configure_torch_backends()
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    motion_data = np.load(cfg.motion_file)
+    offsets = torch.as_tensor(
+        motion_data["action_offsets"], dtype=torch.float32, device=device
+    )
+    period_s = float(motion_data["period_s"])
+
     env_cfg = load_env_cfg(cfg.task_id, play=True)
     env_cfg.seed = cfg.seed
     env_cfg.scene.num_envs = cfg.num_envs
-    env_cfg.episode_length_s = cfg.warmup_s + cfg.duration_s + 1.0
+    env_cfg.episode_length_s = cfg.warmup_s + period_s + 1.0
     env_cfg.terminations.clear()
     command = env_cfg.commands["twist"]
-    command.ranges.lin_vel_x = (cfg.speed, cfg.speed)
+    command.ranges.lin_vel_x = (0.0, 0.0)
     command.ranges.lin_vel_y = (0.0, 0.0)
     command.ranges.ang_vel_z = (0.0, 0.0)
-    command.rel_standing_envs = 0.0
+    command.rel_standing_envs = 1.0
     command.resampling_time_range = (env_cfg.episode_length_s, env_cfg.episode_length_s)
 
     agent_cfg = load_rl_cfg(cfg.task_id)
@@ -64,11 +64,8 @@ def main(cfg: Config) -> None:
 
     robot = raw_env.scene["robot"]
     contact = raw_env.scene["feet_ground_contact"]
-    obs = env.get_observations()
-    initial_pos = robot.data.root_link_pos_w.clone()
-    initial_yaw = _yaw(robot.data.root_link_quat_w).clone()
+    observations = env.get_observations()
     warmup_steps = round(cfg.warmup_s / raw_env.step_dt)
-    record_steps = round(cfg.duration_s / raw_env.step_dt)
     records: dict[str, list[torch.Tensor]] = {
         key: []
         for key in (
@@ -83,16 +80,27 @@ def main(cfg: Config) -> None:
             "foot_contact",
         )
     }
+    max_tilt = torch.zeros(cfg.num_envs, device=device)
+    min_height = torch.full((cfg.num_envs,), float("inf"), device=device)
     started = time.perf_counter()
-    for step in range(warmup_steps + record_steps):
-        current_obs = obs["actor"].clone()
+    for step in range(warmup_steps + len(offsets)):
+        current_obs = observations["actor"].clone()
         with torch.inference_mode():
-            actions = policy(obs)
-            obs, _, _, _ = env.step(actions)
+            base_actions = policy(observations)
+            if step >= warmup_steps:
+                motion_step = step - warmup_steps
+                actions = base_actions + cfg.motion_scale * offsets[motion_step]
+            else:
+                actions = base_actions
+            observations, _, _, _ = env.step(actions)
+        gravity_z = robot.data.projected_gravity_b[:, 2].clamp(-1.0, 1.0)
+        tilt = torch.acos((-gravity_z).clamp(-1.0, 1.0))
+        max_tilt = torch.maximum(max_tilt, tilt)
+        min_height = torch.minimum(min_height, robot.data.root_link_pos_w[:, 2])
         if step < warmup_steps:
             continue
         records["obs"].append(current_obs)
-        records["next_obs"].append(obs["actor"].clone())
+        records["next_obs"].append(observations["actor"].clone())
         records["actions"].append(actions.clone())
         records["joint_pos_rel"].append(
             robot.data.joint_pos - robot.data.default_joint_pos
@@ -106,55 +114,53 @@ def main(cfg: Config) -> None:
         )
 
     stacked = {key: torch.stack(value) for key, value in records.items()}
-    displacement = robot.data.root_link_pos_w - initial_pos
-    heading = _yaw(robot.data.root_link_quat_w)
-    heading_error = torch.atan2(
-        torch.sin(heading - initial_yaw), torch.cos(heading - initial_yaw)
-    ).abs()
-    forward_speed = displacement[:, 0] / (cfg.warmup_s + cfg.duration_s)
-    lateral_speed = displacement[:, 1].abs() / (cfg.warmup_s + cfg.duration_s)
-    score = forward_speed - 0.4 * lateral_speed - 0.2 * heading_error
+    survived = (max_tilt < math.radians(55.0)) & (min_height > 0.06)
+    if not survived.any():
+        raise RuntimeError(
+            "no dynamically valid dance rollout; reduce --motion-scale"
+        )
+    score = min_height - 0.02 * max_tilt
+    score = torch.where(survived, score, torch.full_like(score, -1e9))
     selected = int(torch.argmax(score))
+    survivor_ids = torch.where(survived)[0]
 
     output = Path(cfg.output_file)
     output.parent.mkdir(parents=True, exist_ok=True)
     arrays: dict[str, np.ndarray] = {
-        "period_s": np.array(cfg.duration_s, dtype=np.float32),
-        "step_dt": np.array(raw_env.step_dt, dtype=np.float32),
-        "speed_command": np.array(cfg.speed, dtype=np.float32),
-        "selected_env": np.array(selected, dtype=np.int64),
+        "period_s": np.array(period_s, np.float32),
+        "step_dt": np.array(raw_env.step_dt, np.float32),
+        "speed_command": np.array(0.0, np.float32),
+        "selected_env": np.array(selected, np.int64),
+        "source_action_offsets": offsets.cpu().numpy(),
     }
     for key, value in stacked.items():
         arrays[f"reference_{key}"] = value[:, selected].cpu().numpy()
-    if cfg.canonical_reference_file:
-        canonical = np.load(cfg.canonical_reference_file)
-        for key in records:
-            arrays[f"reference_{key}"] = canonical[f"reference_{key}"]
-        arrays["period_s"] = canonical["period_s"]
-        arrays["step_dt"] = canonical["step_dt"]
-    # AMP uses diverse transitions from every collected rollout, not only the
-    # canonical DeepMimic track.
-    arrays["expert_obs"] = stacked["obs"].flatten(0, 1).cpu().numpy()
-    arrays["expert_next_obs"] = stacked["next_obs"].flatten(0, 1).cpu().numpy()
+    arrays["expert_obs"] = (
+        stacked["obs"][:, survivor_ids].flatten(0, 1).cpu().numpy()
+    )
+    arrays["expert_next_obs"] = (
+        stacked["next_obs"][:, survivor_ids].flatten(0, 1).cpu().numpy()
+    )
     np.savez_compressed(output, **arrays)
-    summary = {
+    metrics = {
+        "motion_file": cfg.motion_file,
         "checkpoint": cfg.checkpoint_file,
         "output": str(output),
-        "device": device,
         "num_envs": cfg.num_envs,
-        "frames": record_steps,
-        "expert_transitions": cfg.num_envs * record_steps,
+        "surviving_envs": int(survived.sum()),
+        "survival_fraction": float(survived.float().mean()),
+        "expert_transitions": int(len(offsets) * len(survivor_ids)),
         "selected_env": selected,
-        "selected_forward_speed_mps": float(forward_speed[selected]),
-        "selected_lateral_speed_mps": float(lateral_speed[selected]),
-        "selected_heading_error_deg": math.degrees(float(heading_error[selected])),
+        "selected_max_tilt_deg": math.degrees(float(max_tilt[selected])),
+        "selected_minimum_height_m": float(min_height[selected]),
+        "period_s": period_s,
+        "motion_scale": cfg.motion_scale,
         "collection_seconds": time.perf_counter() - started,
-        "canonical_reference_file": cfg.canonical_reference_file,
     }
     output.with_suffix(".json").write_text(
-        json.dumps(summary, indent=2) + "\n", encoding="utf-8"
+        json.dumps(metrics, indent=2) + "\n", encoding="utf-8"
     )
-    print(json.dumps(summary, indent=2))
+    print(json.dumps(metrics, indent=2))
     env.close()
 
 
