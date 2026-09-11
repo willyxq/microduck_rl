@@ -1,6 +1,16 @@
+import importlib.util
+import sys
+from pathlib import Path
+
 import numpy as np
 
-from scripts.extract_video_dance_motion import _fill_missing
+_SCRIPT = Path(__file__).parents[1] / "scripts" / "extract_video_dance_motion.py"
+_SPEC = importlib.util.spec_from_file_location("extract_video_dance_motion", _SCRIPT)
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _MODULE
+_SPEC.loader.exec_module(_MODULE)
+_fill_missing = _MODULE._fill_missing
 
 
 def test_fill_missing_keypoints_interpolates_time_axis():
