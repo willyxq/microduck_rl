@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
 import tyro
+
+from scipy.ndimage import gaussian_filter1d
 
 
 POINT_NAMES = (
