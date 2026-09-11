@@ -118,11 +118,11 @@ randomized environments with 100% one-cycle survival.
 
 | Direct-video policy | Training | Tracking reward | Survival |
 |---|---:|---:|---:|
-| DeepMimic | 300 iterations, 218 s | 0.7413 | 99.90% |
-| DeepMimic → AMP (0.25) | 300 iterations, 225 s | 0.5833 | 99.61% |
+| DeepMimic | 300 iterations, 221 s | 0.7731 | 100% |
+| DeepMimic → AMP (0.25) | 300 iterations, 226 s | 0.6497 | 99.71% |
 
 Direct robot tracking improved DeepMimic tracking over the earlier human-only
-Gangnam retarget (0.7413 versus 0.6713). AMP again increased visible variation
+Gangnam retarget (0.7731 versus 0.6713). AMP again increased visible variation
 and lean, while reducing trajectory fidelity and a small amount of robustness.
 This remains monocular 2D retargeting: occluded joints and out-of-plane angles
 cannot be recovered as accurately as encoder logs, motion capture, or a
