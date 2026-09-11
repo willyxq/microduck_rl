@@ -15,7 +15,6 @@ from pathlib import Path
 
 import numpy as np
 import tyro
-
 from scipy.ndimage import gaussian_filter1d
 
 
