@@ -17,7 +17,6 @@ import numpy as np
 import tyro
 from scipy.ndimage import gaussian_filter1d
 
-
 POINT_NAMES = (
     "head_left",
     "head_center",
