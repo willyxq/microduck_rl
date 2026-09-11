@@ -21,6 +21,21 @@ def make_generated_env_cfg(play: bool = False, rough: bool = False):
     return cfg
 
 
+def make_fixed_preview_env_cfg():
+    """Official environment with a deterministic (-0.15, 0, 0) demo command."""
+    cfg = make_generated_env_cfg(play=True)
+    command = cfg.commands["twist"]
+    command.ranges.lin_vel_x = (-0.15, -0.15)
+    command.ranges.lin_vel_y = (0.0, 0.0)
+    command.ranges.ang_vel_z = (0.0, 0.0)
+    command.rel_standing_envs = 0.0
+    command.rel_turn_in_place_envs = 0.0
+    command.rel_heading_envs = 0.0
+    command.rel_forward_envs = 0.0
+    command.rel_world_envs = 0.0
+    return cfg
+
+
 GeneratedRlCfg = deepcopy(MicroduckRlCfg)
 GeneratedRlCfg.experiment_name = "motionlab_moonwalk_backward_official_repro"
 GeneratedRlCfg.run_name = "moonwalk_backward_official_repro"

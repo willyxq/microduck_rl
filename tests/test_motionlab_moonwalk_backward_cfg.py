@@ -1,5 +1,6 @@
 from mjlab_microduck.tasks.microduck_motionlab_moonwalk_backward_env_cfg import (
     GeneratedRlCfg,
+    make_fixed_preview_env_cfg,
     make_generated_env_cfg,
 )
 
@@ -14,3 +15,12 @@ def test_generated_velocity_cfg_contract():
     assert cfg.commands["twist"].rel_standing_envs == 0.08
     assert cfg.rewards["foot_slip"].weight == -0.015
     assert GeneratedRlCfg.algorithm.symmetry_cfg is not None
+
+
+def test_fixed_preview_command():
+    cfg = make_fixed_preview_env_cfg()
+    command = cfg.commands["twist"]
+    assert tuple(command.ranges.lin_vel_x) == (-0.15, -0.15)
+    assert tuple(command.ranges.lin_vel_y) == (0.0, 0.0)
+    assert tuple(command.ranges.ang_vel_z) == (0.0, 0.0)
+    assert command.rel_standing_envs == 0.0

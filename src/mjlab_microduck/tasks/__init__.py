@@ -70,6 +70,7 @@ from .microduck_roulade_env_cfg import (
 from .backlash import make_backlash_variant
 from .microduck_motionlab_moonwalk_backward_env_cfg import (
     GeneratedRlCfg as MotionLabMoonwalkBackwardRlCfg,
+    make_fixed_preview_env_cfg as make_motionlab_moonwalk_fixed_preview_env_cfg,
     make_generated_env_cfg as make_motionlab_moonwalk_backward_env_cfg,
 )
 
@@ -95,6 +96,14 @@ register_mjlab_task(
     task_id="Mjlab-MotionLabMoonwalkBackward-Flat-MicroDuck",
     env_cfg=make_motionlab_moonwalk_backward_env_cfg(),
     play_env_cfg=make_motionlab_moonwalk_backward_env_cfg(play=True),
+    rl_cfg=MotionLabMoonwalkBackwardRlCfg,
+    runner_cls=MicroduckOnPolicyRunner,
+)
+
+register_mjlab_task(
+    task_id="Mjlab-MotionLabMoonwalkBackward-FixedPreview-MicroDuck",
+    env_cfg=make_motionlab_moonwalk_fixed_preview_env_cfg(),
+    play_env_cfg=make_motionlab_moonwalk_fixed_preview_env_cfg(),
     rl_cfg=MotionLabMoonwalkBackwardRlCfg,
     runner_cls=MicroduckOnPolicyRunner,
 )
