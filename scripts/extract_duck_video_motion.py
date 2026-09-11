@@ -95,6 +95,26 @@ def _center_scale(feature: np.ndarray, scale: float) -> np.ndarray:
     return (feature - np.median(feature)) / max(scale, 1e-6)
 
 
+def _normalized_dynamic(feature: np.ndarray) -> np.ndarray:
+    low, high = np.quantile(feature, [0.1, 0.9])
+    return np.clip(
+        (feature - np.median(feature)) / max(high - low, 0.05),
+        -1.0,
+        1.0,
+    )
+
+
+def _knee_flexion(
+    hip: np.ndarray, knee: np.ndarray, foot: np.ndarray
+) -> np.ndarray:
+    upper = hip - knee
+    lower = foot - knee
+    cosine = np.sum(upper * lower, axis=1) / np.maximum(
+        np.linalg.norm(upper, axis=1) * np.linalg.norm(lower, axis=1), 1e-6
+    )
+    return np.pi - np.arccos(np.clip(cosine, -1.0, 1.0))
+
+
 def retarget_tracks(
     tracks: np.ndarray,
     visibility: np.ndarray,
@@ -102,9 +122,12 @@ def retarget_tracks(
     target_hz: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Convert named 2D robot tracks into 14 MicroDuck action offsets."""
+    filled = gaussian_filter1d(
+        _fill_tracks(tracks, visibility), sigma=1.0, axis=0, mode="nearest"
+    )
     points = {
         name: value
-        for name, value in zip(POINT_NAMES, _fill_tracks(tracks, visibility).transpose(1, 0, 2))
+        for name, value in zip(POINT_NAMES, filled.transpose(1, 0, 2))
     }
     pelvis = points["pelvis"]
     hip_mid = 0.5 * (points["left_hip"] + points["right_hip"])
@@ -147,6 +170,16 @@ def retarget_tracks(
         -0.5,
         0.5,
     )
+    left_knee_bend = _normalized_dynamic(
+        _knee_flexion(
+            points["left_hip"], points["left_knee"], points["left_foot"]
+        )
+    )
+    right_knee_bend = _normalized_dynamic(
+        _knee_flexion(
+            points["right_hip"], points["right_knee"], points["right_foot"]
+        )
+    )
     head_axis = points["head_right"] - points["head_left"]
     head_roll = np.clip(
         np.arctan2(head_axis[:, 1], head_axis[:, 0])
@@ -171,6 +204,8 @@ def retarget_tracks(
     right_lift_t = sample(right_lift)
     left_step_t = sample(left_step)
     right_step_t = sample(right_step)
+    left_knee_bend_t = sample(left_knee_bend)
+    right_knee_bend_t = sample(right_knee_bend)
     head_roll_t = sample(head_roll)
     bounce_rate_t = sample(bounce_rate)
 
@@ -180,12 +215,16 @@ def retarget_tracks(
     actions[:, 0] = 0.10 * left_step_t
     actions[:, 1] = 0.16 * sway_t
     actions[:, 2] = -0.14 * squat_t + 0.20 * left_lift_t
-    actions[:, 3] = -0.22 * squat_t - 0.24 * left_lift_t
+    actions[:, 3] = (
+        -0.22 * squat_t - 0.24 * left_lift_t - 0.10 * left_knee_bend_t
+    )
     actions[:, 4] = 0.14 * squat_t - 0.08 * left_lift_t
     actions[:, 9] = -0.10 * right_step_t
     actions[:, 10] = 0.16 * sway_t
     actions[:, 11] = 0.14 * squat_t - 0.20 * right_lift_t
-    actions[:, 12] = 0.22 * squat_t + 0.24 * right_lift_t
+    actions[:, 12] = (
+        0.22 * squat_t + 0.24 * right_lift_t + 0.10 * right_knee_bend_t
+    )
     actions[:, 13] = -0.14 * squat_t + 0.08 * right_lift_t
     actions[:, 6] = np.clip(0.04 * bounce_rate_t, -0.14, 0.14)
     actions[:, 7] = 0.26 * trunk_side_t

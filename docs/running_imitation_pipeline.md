@@ -100,3 +100,30 @@ sequential AMP stage produced larger squats, turns, and head/body motion, but
 lowered exact tracking and robustness. MicroDuck has no arms, so the crossed-arm
 horse-riding gesture cannot be represented; the retargeting preserves the
 lower-body rhythm and torso/head style instead.
+
+### Direct MicroDuck video tracking
+
+For a later Korean duck-dance clip that shows a person on the left and a
+physical MicroDuck on the right, `extract_duck_video_motion.py` tracks the robot
+itself with CoTracker3 instead of applying human proportions to it. Fourteen
+visual anchors cover the head, neck, pelvis, hips, knees, shins, and feet. Their
+relative 2D motion drives mirrored hip-pitch, knee, ankle, hip-roll, and head
+offsets.
+
+The robot turns side-on after the first three seconds, causing persistent
+self-occlusion. Only the 0.5–3.5 s frontal section was accepted: mean point
+visibility was 91.1%, and the least visible anchor still covered 68.9% of
+frames. The retargeted 3 s cycle produced 76,800 expert transitions from 512
+randomized environments with 100% one-cycle survival.
+
+| Direct-video policy | Training | Tracking reward | Survival |
+|---|---:|---:|---:|
+| DeepMimic | 300 iterations, 218 s | 0.7413 | 99.90% |
+| DeepMimic → AMP (0.25) | 300 iterations, 225 s | 0.5833 | 99.61% |
+
+Direct robot tracking improved DeepMimic tracking over the earlier human-only
+Gangnam retarget (0.7413 versus 0.6713). AMP again increased visible variation
+and lean, while reducing trajectory fidelity and a small amount of robustness.
+This remains monocular 2D retargeting: occluded joints and out-of-plane angles
+cannot be recovered as accurately as encoder logs, motion capture, or a
+calibrated multi-view recording.

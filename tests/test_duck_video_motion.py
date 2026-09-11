@@ -60,3 +60,14 @@ def test_retarget_tracks_uses_alternating_foot_lifts_and_knees():
     assert np.ptp(actions[:, 3]) > 0.1
     assert np.ptp(actions[:, 12]) > 0.1
     assert not np.allclose(actions[:, 3], actions[:, 12])
+
+
+def test_retarget_tracks_uses_direct_knee_landmark_motion():
+    tracks = _synthetic_tracks()
+    phase = np.linspace(0, 2 * np.pi, len(tracks), endpoint=False)
+    left_knee = POINT_NAMES.index("left_knee")
+    tracks[:, left_knee, 0] += 12 * np.sin(phase)
+    visibility = np.ones(tracks.shape[:2], dtype=bool)
+    _, actions = retarget_tracks(tracks, visibility, source_hz=15, target_hz=50)
+    assert np.ptp(actions[:, 3]) > 0.08
+    assert np.ptp(actions[:, 12]) < 0.01
