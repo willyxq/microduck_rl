@@ -6,8 +6,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import os
+
 from huggingface_hub import HfApi, hf_hub_download, list_repo_files
 from huggingface_hub.utils import HfHubHTTPError
+
+# huggingface.co is often blocked here; the mirror works.
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
 
 ROOT = Path("/home/william/Workspace/e1901/microduck/hf_policies")
 # Hardcoded: HF list_models search timed out from this machine.
