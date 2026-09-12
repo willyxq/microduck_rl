@@ -127,3 +127,33 @@ and lean, while reducing trajectory fidelity and a small amount of robustness.
 This remains monocular 2D retargeting: occluded joints and out-of-plane angles
 cannot be recovered as accurately as encoder logs, motion capture, or a
 calibrated multi-view recording.
+
+### Human duck-step (Bilibili BV128CqYFEcR)
+
+`extract_duck_step_motion.py` retargets a human-only duck walk onto hip and
+knee offsets. MicroDuck has no independent waist or spine: `trunk_base` is a
+rigid free body. Hip yaw is about ±25° / ±30°, hip roll about ±22°, and hip
+pitch about ±90°. A human waist twist or lean can only be approximated:
+
+- opposite-sign hip yaw for the missing waist twist / duck-toed waddle
+- same-sign hip roll for weight shift
+- hip pitch + knee + ankle for the squat and low step
+
+The usable dance is in 8–16 s of the source clip (240 frames, 100% detection,
+mean keypoint confidence 0.963). At 50 Hz this is a 400-frame, 8.0 s cycle
+with a 0.462 rad peak action offset, 0.324 rad hip-yaw range, and 0.256 rad
+hip-roll range. Overlaying those offsets on VelStand at motion scale 1.4
+yielded 120,400 transitions from 301 of 512 collection environments (58.8%
+one-cycle survival). Scale 1.0 survived completely but looked conservative;
+scale 2.0 collapsed to 2% survival.
+
+| Duck-step policy | Training | Tracking reward | Survival |
+|---|---:|---:|---:|
+| DeepMimic | 300 iterations, 216 s | 0.7250 | 99.80% |
+| DeepMimic → AMP (0.25) | 300 iterations, 225 s | 0.5459 | 97.56% |
+
+DeepMimic stayed closer to the retargeted waddle and more upright (render
+tilt 5.9°). Sequential AMP increased lean and variation (render tilt 9.1°)
+while lowering exact tracking. The remaining visual gap versus the human
+clip is mostly the missing waist DOF and monocular 2D depth, not a failed
+hip-yaw/roll mapping.
