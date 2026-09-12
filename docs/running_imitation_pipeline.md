@@ -128,6 +128,24 @@ This remains monocular 2D retargeting: occluded joints and out-of-plane angles
 cannot be recovered as accurately as encoder logs, motion capture, or a
 calibrated multi-view recording.
 
+The first teacher did not look like the filmed duck. CoTracker queries sat on
+the Bilibili caption, so the feet never moved (≤1 px), and the 90° turn is
+whole-body root yaw that a 14-DoF VelStand overlay cannot show. Peak action
+offset was only 0.12 rad.
+
+`extract_filmed_duck_pose.py` instead crops the right-panel duck, anchors on
+the orange bill / camera-eye / feet, and compares two reconstructions:
+
+| Teacher | Peak offset | Head yaw | Root yaw | Notes |
+|---|---:|---:|---:|---|
+| Old CoTracker + VelStand | 0.12 rad | ~0.15 rad | 0 | standing wiggle |
+| Appearance + analytic | 0.98 rad | 0.97 rad | 1.55 rad | selected |
+| Appearance + MuJoCo IK | 1.20 rad | 1.34 rad | 1.96 rad | overfits noisy feet |
+
+The selected teacher is a kinematic gantry replay (`record_kinematic_teacher.py`)
+of the analytic joints plus root yaw. That is the pose the later DeepMimic
+stage should track.
+
 ### Human duck-step (Bilibili BV128CqYFEcR)
 
 `extract_duck_step_motion.py` retargets a human-only duck walk onto hip and
