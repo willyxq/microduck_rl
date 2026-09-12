@@ -175,3 +175,9 @@ tilt 5.9°). Sequential AMP increased lean and variation (render tilt 9.1°)
 while lowering exact tracking. The remaining visual gap versus the human
 clip is mostly the missing waist DOF and monocular 2D depth, not a failed
 hip-yaw/roll mapping.
+
+## Closed: filmed-duck video retarget
+
+The analytic / MuJoCo-IK teachers still did not look like the filmed
+MicroDuck. That line of work is stopped. Lessons are in
+`docs/video_retarget_lessons.md`.
