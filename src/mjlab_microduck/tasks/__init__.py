@@ -1,4 +1,5 @@
 from mjlab.tasks.registry import register_mjlab_task
+from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
 from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 
 
@@ -72,6 +73,19 @@ from .microduck_motionlab_moonwalk_backward_env_cfg import (
     GeneratedRlCfg as MotionLabMoonwalkBackwardRlCfg,
     make_fixed_preview_env_cfg as make_motionlab_moonwalk_fixed_preview_env_cfg,
     make_generated_env_cfg as make_motionlab_moonwalk_backward_env_cfg,
+)
+from .microduck_tracking_env_cfg import (
+    MicroduckTrackingRlCfg,
+    make_microduck_tracking_env_cfg,
+)
+
+# BeyondMimic tracking — UMR walk clip on the walk-model duck.
+register_mjlab_task(
+    task_id="Mjlab-Tracking-Flat-MicroDuck",
+    env_cfg=make_microduck_tracking_env_cfg(),
+    play_env_cfg=make_microduck_tracking_env_cfg(play=True),
+    rl_cfg=MicroduckTrackingRlCfg,
+    runner_cls=MotionTrackingOnPolicyRunner,
 )
 
 # Standard velocity task
