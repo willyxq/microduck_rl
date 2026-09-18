@@ -10,12 +10,12 @@ BeyondMimic command (joint pos/vel) plus anchor residuals; export goes
 through ``MotionTrackingOnPolicyRunner`` (obs + time_step).
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import EventTermCfg, TerminationTermCfg
-from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.rl import (
     RslRlModelCfg,
     RslRlOnPolicyRunnerCfg,
@@ -28,9 +28,41 @@ from mjlab.tasks.tracking.tracking_env_cfg import make_tracking_env_cfg
 from mjlab_microduck.robot.microduck_constants import MICRODUCK_WALK_ROBOT_CFG
 from mjlab_microduck.tasks import mdp as microduck_mdp
 
-UMR_WALK_MOTION_FILE = (
-    Path(__file__).resolve().parents[1] / "motions" / "umr_humanoid_walk.npz"
+MOTIONS_DIR = Path(__file__).resolve().parents[1] / "motions"
+UMR_RETARGET_DIR = Path(
+    "/home/william/Workspace/e1901/repro/UMR-run/output/microduck_retarget"
 )
+
+
+@dataclass(frozen=True)
+class TrackingMotionSpec:
+    key: str
+    label: str
+    umr_name: str
+    fail_m: float = 0.06
+    max_iterations: int = 5_000
+
+
+TRACKING_MOTIONS: tuple[TrackingMotionSpec, ...] = (
+    TrackingMotionSpec("walk", "Walk", "humanoid_walk_character_microduck.npz", max_iterations=10_000),
+    TrackingMotionSpec("run", "Run", "humanoid_run_character_microduck.npz"),
+    TrackingMotionSpec("zombie_walk", "ZombieWalk", "humanoid_zombie_walk_character_microduck.npz"),
+    TrackingMotionSpec("jump", "Jump", "humanoid_jump_character_microduck.npz", fail_m=0.08),
+    TrackingMotionSpec("dance", "Dance", "humanoid_dance_a_character_microduck.npz"),
+    TrackingMotionSpec("spinkick", "Spinkick", "humanoid_spinkick_character_microduck.npz", fail_m=0.08),
+)
+
+TRACKING_MOTION_BY_KEY = {spec.key: spec for spec in TRACKING_MOTIONS}
+
+UMR_WALK_MOTION_FILE = MOTIONS_DIR / "umr_humanoid_walk.npz"
+
+
+def motion_npz_path(key: str) -> Path:
+    return MOTIONS_DIR / f"umr_humanoid_{key}.npz"
+
+
+def tracking_task_id(key: str) -> str:
+    return f"Mjlab-Tracking-Flat-MicroDuck-{TRACKING_MOTION_BY_KEY[key].label}"
 
 # Free-root first: MotionCommand writes body_names[0] as the reset root.
 # trunk_base is also the BeyondMimic anchor (G1 uses pelvis + torso_link;
@@ -90,8 +122,10 @@ DUCK_VELOCITY_RANGE = {
 def make_microduck_tracking_env_cfg(
     play: bool = False,
     motion_file: str | Path | None = None,
+    motion_key: str = "walk",
 ) -> ManagerBasedRlEnvCfg:
     """Create MicroDuck flat-terrain BeyondMimic tracking configuration."""
+    spec = TRACKING_MOTION_BY_KEY[motion_key]
     cfg = make_tracking_env_cfg()
 
     cfg.scene.entities = {"robot": MICRODUCK_WALK_ROBOT_CFG}
@@ -113,7 +147,7 @@ def make_microduck_tracking_env_cfg(
 
     motion_cmd = cfg.commands["motion"]
     assert isinstance(motion_cmd, MotionCommandCfg)
-    motion_cmd.motion_file = str(motion_file or UMR_WALK_MOTION_FILE)
+    motion_cmd.motion_file = str(motion_file or motion_npz_path(motion_key))
     motion_cmd.anchor_body_name = "trunk_base"
     motion_cmd.body_names = TRACKING_BODY_NAMES
     motion_cmd.pose_range = dict(DUCK_POSE_RANGE)
@@ -150,8 +184,8 @@ def make_microduck_tracking_env_cfg(
     cfg.rewards["motion_body_ang_vel"].params["std"] = ANG_VEL_REWARD_STD
     cfg.rewards["self_collisions"].params["force_threshold"] = 2.0
 
-    cfg.terminations["anchor_pos"].params["threshold"] = ANCHOR_POS_FAIL_M
-    cfg.terminations["ee_body_pos"].params["threshold"] = EE_POS_FAIL_M
+    cfg.terminations["anchor_pos"].params["threshold"] = spec.fail_m
+    cfg.terminations["ee_body_pos"].params["threshold"] = spec.fail_m
     cfg.terminations["ee_body_pos"].params["body_names"] = TRACKING_EE_BODY_NAMES
     cfg.terminations["nan_state"] = TerminationTermCfg(
         func=microduck_mdp.robot_state_is_nan,
@@ -173,41 +207,46 @@ def make_microduck_tracking_env_cfg(
     return cfg
 
 
-MicroduckTrackingRlCfg = RslRlOnPolicyRunnerCfg(
-    actor=RslRlModelCfg(
-        hidden_dims=(512, 256, 128),
-        activation="elu",
-        obs_normalization=True,
-        distribution_cfg={
-            "class_name": "GaussianDistribution",
-            "init_std": 1.0,
-            "std_type": "scalar",
-        },
-    ),
-    critic=RslRlModelCfg(
-        hidden_dims=(512, 256, 128),
-        activation="elu",
-        obs_normalization=True,
-    ),
-    algorithm=RslRlPpoAlgorithmCfg(
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        clip_param=0.2,
-        entropy_coef=0.005,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=1.0e-3,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-    ),
-    wandb_project="mjlab_microduck",
-    experiment_name="tracking_walk",
-    run_name="umr_walk",
-    wandb_tags=("beyondmimic", "umr", "walk"),
-    save_interval=250,
-    num_steps_per_env=24,
-    max_iterations=10_000,
-)
+def make_microduck_tracking_rl_cfg(motion_key: str = "walk") -> RslRlOnPolicyRunnerCfg:
+    spec = TRACKING_MOTION_BY_KEY[motion_key]
+    return RslRlOnPolicyRunnerCfg(
+        actor=RslRlModelCfg(
+            hidden_dims=(512, 256, 128),
+            activation="elu",
+            obs_normalization=True,
+            distribution_cfg={
+                "class_name": "GaussianDistribution",
+                "init_std": 1.0,
+                "std_type": "scalar",
+            },
+        ),
+        critic=RslRlModelCfg(
+            hidden_dims=(512, 256, 128),
+            activation="elu",
+            obs_normalization=True,
+        ),
+        algorithm=RslRlPpoAlgorithmCfg(
+            value_loss_coef=1.0,
+            use_clipped_value_loss=True,
+            clip_param=0.2,
+            entropy_coef=0.005,
+            num_learning_epochs=5,
+            num_mini_batches=4,
+            learning_rate=1.0e-3,
+            schedule="adaptive",
+            gamma=0.99,
+            lam=0.95,
+            desired_kl=0.01,
+            max_grad_norm=1.0,
+        ),
+        wandb_project="mjlab_microduck",
+        experiment_name=f"tracking_{spec.key}",
+        run_name=f"umr_{spec.key}",
+        wandb_tags=("beyondmimic", "umr", spec.key),
+        save_interval=250,
+        num_steps_per_env=24,
+        max_iterations=spec.max_iterations,
+    )
+
+
+MicroduckTrackingRlCfg = make_microduck_tracking_rl_cfg("walk")

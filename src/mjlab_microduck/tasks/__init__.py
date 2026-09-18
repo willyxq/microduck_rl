@@ -75,18 +75,30 @@ from .microduck_motionlab_moonwalk_backward_env_cfg import (
     make_generated_env_cfg as make_motionlab_moonwalk_backward_env_cfg,
 )
 from .microduck_tracking_env_cfg import (
+    TRACKING_MOTIONS,
     MicroduckTrackingRlCfg,
     make_microduck_tracking_env_cfg,
+    make_microduck_tracking_rl_cfg,
+    tracking_task_id,
 )
 
-# BeyondMimic tracking — UMR walk clip on the walk-model duck.
+# BeyondMimic tracking — one task per UMR clip. The un-suffixed id stays the
+# original walk task so the first walk run/checkpoint path still resolves.
 register_mjlab_task(
     task_id="Mjlab-Tracking-Flat-MicroDuck",
-    env_cfg=make_microduck_tracking_env_cfg(),
-    play_env_cfg=make_microduck_tracking_env_cfg(play=True),
+    env_cfg=make_microduck_tracking_env_cfg(motion_key="walk"),
+    play_env_cfg=make_microduck_tracking_env_cfg(play=True, motion_key="walk"),
     rl_cfg=MicroduckTrackingRlCfg,
     runner_cls=MotionTrackingOnPolicyRunner,
 )
+for _spec in TRACKING_MOTIONS:
+    register_mjlab_task(
+        task_id=tracking_task_id(_spec.key),
+        env_cfg=make_microduck_tracking_env_cfg(motion_key=_spec.key),
+        play_env_cfg=make_microduck_tracking_env_cfg(play=True, motion_key=_spec.key),
+        rl_cfg=make_microduck_tracking_rl_cfg(_spec.key),
+        runner_cls=MotionTrackingOnPolicyRunner,
+    )
 
 # Standard velocity task
 register_mjlab_task(

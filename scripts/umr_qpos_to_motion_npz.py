@@ -187,12 +187,34 @@ def convert(
     return output_file
 
 
+def convert_catalog(output_fps: float = 50.0, robot_xml: Path | None = None) -> list[Path]:
+    from mjlab_microduck.tasks.microduck_tracking_env_cfg import (
+        MOTIONS_DIR,
+        TRACKING_MOTIONS,
+        UMR_RETARGET_DIR,
+        motion_npz_path,
+    )
+
+    written: list[Path] = []
+    for spec in TRACKING_MOTIONS:
+        src = UMR_RETARGET_DIR / spec.umr_name
+        dst = motion_npz_path(spec.key)
+        print(f"\n=== {spec.key}  {src.name} → {dst.name} ===")
+        written.append(convert(src, dst, output_fps, robot_xml))
+    print(f"\nWrote {len(written)} motions under {MOTIONS_DIR}")
+    return written
+
+
 def main(
     input_file: Path = DEFAULT_UMR_WALK,
     output_file: Path = DEFAULT_OUTPUT,
     output_fps: float = 50.0,
     robot_xml: Path | None = None,
+    all_motions: bool = False,
 ) -> None:
+    if all_motions:
+        convert_catalog(output_fps, robot_xml)
+        return
     if not input_file.exists():
         raise FileNotFoundError(input_file)
     convert(input_file, output_file, output_fps, robot_xml)
